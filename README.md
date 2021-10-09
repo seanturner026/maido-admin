@@ -1,1 +1,1 @@
-# maido-admin-cli
+# maido-admin
