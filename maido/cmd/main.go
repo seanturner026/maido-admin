@@ -3,7 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"seanturner026/maido-admin/cmd/refresh"
+	"seanturner026/maido-admin/maido/cmd/refresh"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -13,11 +13,9 @@ var cfgFile string
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "maido-admin",
-	Short: "CLI used to update DynamoDB",
-	Long: `
-maido-admin is a CLI library for Go that is used to update the maido DynamoDB backend with new tea
-blends.`,
+	Use:          "maido-admin",
+	Short:        "CLI used to update DynamoDB",
+	SilenceUsage: true,
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -25,6 +23,10 @@ blends.`,
 func Execute() {
 	cobra.CheckErr(rootCmd.Execute())
 	rootCmd.AddCommand(refresh.Command)
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }
 
 func init() {
@@ -34,7 +36,7 @@ func init() {
 	// Cobra supports persistent flags, which, if defined here,
 	// will be global for your application.
 
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.maido-admin.yaml)")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "./.env.yaml", "config file (default is $HOME/.env.yaml)")
 
 	// Cobra also supports local flags, which will only run
 	// when this action is called directly.
@@ -54,7 +56,7 @@ func initConfig() {
 		// Search config in home directory with name ".maido-admin" (without extension).
 		viper.AddConfigPath(home)
 		viper.SetConfigType("yaml")
-		viper.SetConfigName(".maido-admin")
+		viper.SetConfigName(".env")
 	}
 
 	viper.AutomaticEnv() // read in environment variables that match

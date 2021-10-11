@@ -1,0 +1,10 @@
+{
+  "items": [
+    {
+      "name": "Tumeric Ginger Tea",
+      "action": "list",
+      "price": "10.00",
+      "description": "Tumeric tea with ginger."
+    }
+  ]
+}
