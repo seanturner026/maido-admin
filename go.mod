@@ -8,7 +8,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.2.1
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.5.1
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.16.1
-	github.com/google/uuid v1.3.0
 	github.com/spf13/cobra v1.2.1
 	github.com/spf13/viper v1.8.1
 )

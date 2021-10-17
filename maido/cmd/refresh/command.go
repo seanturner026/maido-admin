@@ -14,7 +14,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -63,10 +62,9 @@ type items struct {
 }
 
 type item struct {
-	PK          string `dynamodbav:"PK"          json:",omitempty"`
+	Name        string `dynamodbav:"PK"          json:"name"`
 	SK          string `dynamodbav:"SK"          json:",omitempty"`
 	Status      string `dynamodbav:"DK1"         json:"status"`
-	Name        string `dynamodbav:"Name"        json:"name"`
 	Description string `dynamodbav:"Description" json:"description"`
 	Price       string `dynamodbav:"Price"       json:"price"`
 }
@@ -88,7 +86,6 @@ func readItems(inventoryFileName string) (*items, error) {
 	}
 
 	err = json.Unmarshal(content, items)
-	fmt.Printf("%+v\n", items)
 	if err != nil {
 		return items, fmt.Errorf("error unmarshaling inventory, %v", err)
 	}
@@ -96,9 +93,7 @@ func readItems(inventoryFileName string) (*items, error) {
 }
 
 func generatePutRequestInput(item item) (map[string]types.AttributeValue, error) {
-	item.PK = uuid.NewString()
-	item.SK = "BLEND"
-	fmt.Printf("%+v\n", item)
+	item.SK = "PRODUCT<>BLEND"
 	putItemInput, err := attributevalue.MarshalMap(item)
 	if err != nil {
 		return map[string]types.AttributeValue{}, err
@@ -146,30 +141,56 @@ func generateBatchWriteItemInputs(items items, tableName string) ([]*dynamodb.Ba
 }
 
 type writeErrorChannel struct {
-	Error error
+	Service string
+	Error   error
 }
 
-func orchestrateWriteItems(client *dynamodb.Client, inputs []*dynamodb.BatchWriteItemInput, tableName string) error {
+func orchestrateWrites(
+	client_dynamodb *dynamodb.Client,
+	client_s3 *s3.Client,
+	inputs []*dynamodb.BatchWriteItemInput,
+	tableName string,
+) error {
+
 	requestCount := len(inputs)
+	if len(inputs) > 1 {
+		requestCount += (requestCount-1)*25 + len(inputs[requestCount-1].RequestItems[tableName])
+	} else {
+		requestCount += len(inputs[requestCount-1].RequestItems[tableName])
+	}
+
 	writeChan := make(chan writeErrorChannel, requestCount)
 	wg := new(sync.WaitGroup)
 	wg.Add(requestCount)
+	bucketName := viper.GetString("bucket_name")
+	var objectName string
 	for _, input := range inputs {
-		go writeItems(client, tableName, input, wg, writeChan)
+		go writeItemsToDynamoDB(client_dynamodb, tableName, input, wg, writeChan)
+
+		for _, requestItem := range input.RequestItems[tableName] {
+			objectName = fmt.Sprintf("%s.png", requestItem.PutRequest.Item["PK"].(*types.AttributeValueMemberS).Value)
+			go writeItemToS3(
+				client_s3,
+				bucketName,
+				objectName,
+				wg,
+				writeChan,
+			)
+		}
 	}
 
 	wg.Wait()
 	close(writeChan)
 	if len(writeChan) > 0 {
 		for err := range writeChan {
-			log.Printf("Error writing objects %+v", err.Error)
+			log.Printf("Error writing objects to %s, %+v", err.Service, err.Error)
 		}
 		return fmt.Errorf("error writing objects")
 	}
 	return nil
 }
 
-func writeItems(
+func writeItemsToDynamoDB(
 	client *dynamodb.Client,
 	tableName string,
 	input *dynamodb.BatchWriteItemInput,
@@ -177,12 +198,14 @@ func writeItems(
 	ch chan writeErrorChannel,
 ) {
 	defer wg.Done()
+
 	resp, err := client.BatchWriteItem(context.TODO(), input)
 	if err != nil {
-		res := writeErrorChannel{Error: err}
+		res := writeErrorChannel{Error: err, Service: "DynamoDB"}
 		ch <- res
 		return
 	}
+
 	_, ok := resp.UnprocessedItems[tableName]
 	if ok {
 		for {
@@ -201,8 +224,35 @@ func writeItems(
 	}
 }
 
+// TODO: Implement checks
+// Check the item is in assets directory
+// Check the item doesn't exist in S3 currently
+func writeItemToS3(client *s3.Client, bucketName, objectName string, wg *sync.WaitGroup, ch chan writeErrorChannel) {
+	defer wg.Done()
+	image, err := os.Open(fmt.Sprintf("./assets/%s", objectName))
+	if err != nil {
+		res := writeErrorChannel{Error: err, Service: "S3"}
+		ch <- res
+		return
+	}
+	defer image.Close()
+
+	input := &s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectName),
+		Body:   image,
+	}
+
+	_, err = client.PutObject(context.TODO(), input)
+	if err != nil {
+		res := writeErrorChannel{Error: err, Service: "S3"}
+		ch <- res
+		return
+	}
+}
+
 func main() {
-	client_dynamodb, _, err := initialize_clients()
+	client_dynamodb, client_s3, err := initialize_clients()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -223,5 +273,5 @@ func main() {
 		log.Fatal(err)
 	}
 
-	orchestrateWriteItems(client_dynamodb, inputs, tableName)
+	orchestrateWrites(client_dynamodb, client_s3, inputs, tableName)
 }
