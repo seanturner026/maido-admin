@@ -1,8 +1,8 @@
 {
   "items": [
     {
-      "name": "Tumeric Ginger Tea",
-      "action": "list",
+      "name": "tumeric_ginger_tea",
+      "status": "listed",
       "price": "10.00",
       "description": "Tumeric tea with ginger."
     }

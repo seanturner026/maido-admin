@@ -13,6 +13,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -26,9 +28,10 @@ var Command = &cobra.Command{
 	},
 }
 
-func initialize_client() (*dynamodb.Client, error) {
+func initialize_clients() (*dynamodb.Client, *s3.Client, error) {
 	viper.SetDefault("awsEndpoint", "")
 	awsEndpoint := viper.GetString("aws_test_endpoint")
+	// TODO: Get working
 	customResolver := aws.EndpointResolverFunc(func(service, region string) (aws.Endpoint, error) {
 		return aws.Endpoint{
 			PartitionID:   "aws",
@@ -47,11 +50,12 @@ func initialize_client() (*dynamodb.Client, error) {
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to load AWS configuration %v", err)
+		return nil, nil, fmt.Errorf("failed to load AWS configuration %v", err)
 	}
 
-	client := dynamodb.NewFromConfig(cfg)
-	return client, nil
+	client_dynamodb := dynamodb.NewFromConfig(cfg)
+	client_s3 := s3.NewFromConfig(cfg)
+	return client_dynamodb, client_s3, nil
 }
 
 type items struct {
@@ -59,10 +63,10 @@ type items struct {
 }
 
 type item struct {
-	Type        string `dynamodbav:"PK"          json:",omitempty"`
-	Name        string `dynamodbav:"SK"           json:"name"`
-	Action      string `dynamodbav:"Action"      json:"action"`
-	Listed      bool   `dynamodbav:"Listed"      json:",omitempty"`
+	PK          string `dynamodbav:"PK"          json:",omitempty"`
+	SK          string `dynamodbav:"SK"          json:",omitempty"`
+	Status      string `dynamodbav:"DK1"         json:"status"`
+	Name        string `dynamodbav:"Name"        json:"name"`
 	Description string `dynamodbav:"Description" json:"description"`
 	Price       string `dynamodbav:"Price"       json:"price"`
 }
@@ -84,6 +88,7 @@ func readItems(inventoryFileName string) (*items, error) {
 	}
 
 	err = json.Unmarshal(content, items)
+	fmt.Printf("%+v\n", items)
 	if err != nil {
 		return items, fmt.Errorf("error unmarshaling inventory, %v", err)
 	}
@@ -91,7 +96,9 @@ func readItems(inventoryFileName string) (*items, error) {
 }
 
 func generatePutRequestInput(item item) (map[string]types.AttributeValue, error) {
-	item.Type = "BLEND"
+	item.PK = uuid.NewString()
+	item.SK = "BLEND"
+	fmt.Printf("%+v\n", item)
 	putItemInput, err := attributevalue.MarshalMap(item)
 	if err != nil {
 		return map[string]types.AttributeValue{}, err
@@ -121,7 +128,11 @@ func generateBatchWriteItemInputs(items items, tableName string) ([]*dynamodb.Ba
 
 		putItemInput, err := generatePutRequestInput(putItem)
 		if err != nil {
-			return []*dynamodb.BatchWriteItemInput{}, fmt.Errorf("error generating batch write item input for %s, %v", putItem.Name, err)
+			return []*dynamodb.BatchWriteItemInput{}, fmt.Errorf(
+				"error generating batch write item input for %s, %v",
+				putItem.Name,
+				err,
+			)
 		}
 
 		putItemRequest := types.WriteRequest{
@@ -158,7 +169,13 @@ func orchestrateWriteItems(client *dynamodb.Client, inputs []*dynamodb.BatchWrit
 	return nil
 }
 
-func writeItems(client *dynamodb.Client, tableName string, input *dynamodb.BatchWriteItemInput, wg *sync.WaitGroup, ch chan writeErrorChannel) {
+func writeItems(
+	client *dynamodb.Client,
+	tableName string,
+	input *dynamodb.BatchWriteItemInput,
+	wg *sync.WaitGroup,
+	ch chan writeErrorChannel,
+) {
 	defer wg.Done()
 	resp, err := client.BatchWriteItem(context.TODO(), input)
 	if err != nil {
@@ -185,7 +202,7 @@ func writeItems(client *dynamodb.Client, tableName string, input *dynamodb.Batch
 }
 
 func main() {
-	client, err := initialize_client()
+	client_dynamodb, _, err := initialize_clients()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -206,5 +223,5 @@ func main() {
 		log.Fatal(err)
 	}
 
-	orchestrateWriteItems(client, inputs, tableName)
+	orchestrateWriteItems(client_dynamodb, inputs, tableName)
 }
