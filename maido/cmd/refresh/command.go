@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -62,7 +63,8 @@ type items struct {
 }
 
 type item struct {
-	Name        string `dynamodbav:"PK"          json:"name"`
+	ID          string `dynamodbav:"PK"          json:"id"`
+	Name        string `dynamodbav:"Name"        json:"name"`
 	SK          string `dynamodbav:"SK"          json:",omitempty"`
 	Status      string `dynamodbav:"DK1"         json:"status"`
 	Description string `dynamodbav:"Description" json:"description"`
@@ -93,7 +95,8 @@ func readItems(inventoryFileName string) (*items, error) {
 }
 
 func generatePutRequestInput(item item) (map[string]types.AttributeValue, error) {
-	item.SK = "PRODUCT<>BLEND"
+	item.SK = "PRODUCT#BLEND"
+	item.ID = fmt.Sprintf("PRODUCT#%s", item.ID)
 	putItemInput, err := attributevalue.MarshalMap(item)
 	if err != nil {
 		return map[string]types.AttributeValue{}, err
@@ -152,11 +155,13 @@ func orchestrateWrites(
 	tableName string,
 ) error {
 
-	requestCount := len(inputs)
+	var requestCount int
 	if len(inputs) > 1 {
-		requestCount += (requestCount-1)*25 + len(inputs[requestCount-1].RequestItems[tableName])
+		fullBatchWriteItemInputs := len(inputs) - 1
+		semiFullBatchWriteItemInputs := len(inputs[requestCount-1].RequestItems[tableName])
+		requestCount = ((fullBatchWriteItemInputs * 25) + semiFullBatchWriteItemInputs) * 2
 	} else {
-		requestCount += len(inputs[requestCount-1].RequestItems[tableName])
+		requestCount = len(inputs[0].RequestItems[tableName]) * 2
 	}
 
 	writeChan := make(chan writeErrorChannel, requestCount)
@@ -168,7 +173,10 @@ func orchestrateWrites(
 		go writeItemsToDynamoDB(client_dynamodb, tableName, input, wg, writeChan)
 
 		for _, requestItem := range input.RequestItems[tableName] {
-			objectName = fmt.Sprintf("%s.png", requestItem.PutRequest.Item["PK"].(*types.AttributeValueMemberS).Value)
+			objectName = strings.Split(
+				fmt.Sprintf("%s.png", requestItem.PutRequest.Item["PK"].(*types.AttributeValueMemberS).Value),
+				"PRODUCT#",
+			)[1]
 			go writeItemToS3(
 				client_s3,
 				bucketName,
